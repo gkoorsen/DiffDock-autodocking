@@ -175,12 +175,18 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
   return combined_results
 
   
-def main(input_file):
+def main():
+  
+  url = 'https://github.com/gkoorsen/DiffDock-autodocking/blob/main/targets_smiles.xlsx?raw=true'
+  response = requests.get(url)
+
+  with open('temporary_excel_file.xlsx', 'wb') as input_file:
+      input_file.write(response.content)
   
   pdb_files, smiless =  import_data(input_file)
   results = run_in_batches_per_pdb_python(pdb_files, smiless,batch_length=2)
 
 
-if __name__ == '__main__':
-  main(input_file)
+if __name__ == '__main__': 
+  main()
 

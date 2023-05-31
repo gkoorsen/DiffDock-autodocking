@@ -307,19 +307,26 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
       df_list.append(df_results)
 
   combined_results = pd.DataFrame()
+
   now = datetime.datetime.now()
   now_str = now.strftime('%Y-%m-%d_%H-%M-%S')
+
   results_name = f"combined_results_{now_str}.csv"
   
   for d in df_list:
     combined_results = pd.concat([combined_results,d])
   combined_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{results_name}', sep='\t', index=None)
 
+  return combined_results
+
+  
 def main():
 
   drive.mount('/content/gdrive')
   install_all_packages()
-  run_in_batches_per_pdb_python(pdb_files[2:4], smiless[:3],batch_length=1)
+  results = run_in_batches_per_pdb_python(pdb_files, smiless,batch_length=1)
 
 
-  
+if __name__ == '__main__':
+  main()
+

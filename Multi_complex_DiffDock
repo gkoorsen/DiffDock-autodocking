@@ -1,0 +1,969 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/gkoorsen/DiffDock-autodocking/blob/main/Multi_complex_DiffDock\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "ZAH5NYgIWIlI"
+      },
+      "source": [
+        "# DiffDock\n",
+        "original colab by [@btnaughton](https://twitter.com/btnaughton), modified by gkoorsen for for use @UJ - docking in batches"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 2,
+      "metadata": {
+        "id": "GMAu5XrN5m2J"
+      },
+      "outputs": [],
+      "source": [
+        "def install_all_packages(): \n",
+        "\n",
+        "\n",
+        "  if os.path.exists('/content/DiffDock/results'):\n",
+        "    !rm -rf /content/DiffDock/results\n",
+        "\n",
+        "  !pip install ipython-autotime --quiet\n",
+        "  %load_ext autotime\n",
+        "\n",
+        "  if not os.path.exists('/content/DiffDock'):\n",
+        "      %cd /content\n",
+        "      !git clone https://github.com/gcorso/DiffDock.git\n",
+        "      %cd /content/DiffDock\n",
+        "      !git checkout a6c5275 # remove/update for more up to date code\n",
+        "\n",
+        "  try:\n",
+        "      import biopandas\n",
+        "      import torch\n",
+        "  except:\n",
+        "      !pip install pyg==0.7.1 --quiet\n",
+        "      !pip install pyyaml==6.0 --quiet\n",
+        "      !pip install scipy==1.7.3 --quiet\n",
+        "      !pip install networkx==2.6.3 --quiet\n",
+        "      !pip install biopython==1.79 --quiet\n",
+        "      !pip install rdkit-pypi==2022.03.5 --quiet\n",
+        "      !pip install e3nn==0.5.0 --quiet\n",
+        "      !pip install spyrmsd==0.5.2 --quiet\n",
+        "      !pip install biopandas==0.4.1 --quiet\n",
+        "      !pip install torch==1.12.1+cu113 --quiet\n",
+        "\n",
+        "  import torch\n",
+        "\n",
+        "  try:\n",
+        "      import torch_geometric\n",
+        "  except ModuleNotFoundError:\n",
+        "      !pip uninstall torch-scatter torch-sparse torch-geometric torch-cluster  --y\n",
+        "      !pip install torch-scatter -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet\n",
+        "      !pip install torch-sparse -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet\n",
+        "      !pip install torch-cluster -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet\n",
+        "      !pip install git+https://github.com/pyg-team/pytorch_geometric.git  --quiet \n",
+        "\n",
+        "  if not os.path.exists(\"/content/DiffDock/esm\"):\n",
+        "      %cd /content/DiffDock\n",
+        "      !git clone https://github.com/facebookresearch/esm\n",
+        "      %cd /content/DiffDock/esm\n",
+        "      !git checkout ca8a710 # remove/update for more up to date code\n",
+        "      !sudo pip install -e .\n",
+        "      %cd /content/DiffDock"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "EQtuAlMl97EN"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 3,
+      "metadata": {
+        "id": "LGWZDb0OPaZG"
+      },
+      "outputs": [],
+      "source": [
+        "def import_data_and_create_csv(file_name,output_file):\n",
+        "  df = pd.read_excel(file_name)\n",
+        "  PDBs = ''\n",
+        "  for name in list(df['PDB IDs']):  \n",
+        "    PDBs += name+',' \n",
+        "  PDB_id = PDBs[:-1]\n",
+        "\n",
+        "  def download_pdb_file(pdb_id: str) -> str:\n",
+        "      \"\"\"Download pdb file as a string from rcsb.org\"\"\"\n",
+        "      PDB_DIR =\"/tmp/pdb/\"\n",
+        "      os.makedirs(PDB_DIR, exist_ok=True)\n",
+        "\n",
+        "      # url or pdb_id\n",
+        "      if pdb_id.startswith('http'):\n",
+        "          url = pdb_id\n",
+        "          filename = url.split('/')[-1]\n",
+        "      elif pdb_id.endswith(\".pdb\"):\n",
+        "          return pdb_id\n",
+        "      else:\n",
+        "          if pdb_id.startswith(\"AF\"):\n",
+        "              url = f\"https://alphafold.ebi.ac.uk/files/{pdb_id}-model_v3.pdb\"\n",
+        "          else:\n",
+        "              url = f\"http://files.rcsb.org/view/{pdb_id}.pdb\"\n",
+        "          filename = f'{pdb_id}.pdb'\n",
+        "\n",
+        "      cache_path = os.path.join(PDB_DIR, filename)\n",
+        "      if os.path.exists(cache_path):\n",
+        "          return cache_path\n",
+        "\n",
+        "      pdb_req = requests.get(url)\n",
+        "      pdb_req.raise_for_status()\n",
+        "      open(cache_path, 'w').write(pdb_req.text)\n",
+        "      return cache_path\n",
+        "\n",
+        "  pdb_files = [download_pdb_file(_PDB_id) for _PDB_id in tqdm(PDB_id.split(\",\"))]\n",
+        "  smiless = df['Compound SMILES']\n",
+        "\n",
+        "  with open(output_file, 'w') as out:\n",
+        "      out.write(\"protein_path,ligand\\n\")\n",
+        "      for pdb_file in pdb_files:\n",
+        "        for smiles in smiless:\n",
+        "          out.write(f\"{pdb_file},{smiles}\\n\")\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 4,
+      "metadata": {
+        "id": "_yzncaFE1i5Z"
+      },
+      "outputs": [],
+      "source": [
+        "def import_data(file_name,output_file):\n",
+        "\n",
+        "  df = pd.read_excel(file_name)\n",
+        "  PDBs = ''\n",
+        "  for name in list(df['PDB IDs']):  \n",
+        "    PDBs += name+',' \n",
+        "  PDB_id = PDBs[:-1]\n",
+        "\n",
+        "  def download_pdb_file(pdb_id: str) -> str:\n",
+        "      \"\"\"Download pdb file as a string from rcsb.org\"\"\"\n",
+        "      PDB_DIR =\"/tmp/pdb/\"\n",
+        "      os.makedirs(PDB_DIR, exist_ok=True)\n",
+        "\n",
+        "      # url or pdb_id\n",
+        "      if pdb_id.startswith('http'):\n",
+        "          url = pdb_id\n",
+        "          filename = url.split('/')[-1]\n",
+        "      elif pdb_id.endswith(\".pdb\"):\n",
+        "          return pdb_id\n",
+        "      else:\n",
+        "          if pdb_id.startswith(\"AF\"):\n",
+        "              url = f\"https://alphafold.ebi.ac.uk/files/{pdb_id}-model_v3.pdb\"\n",
+        "          else:\n",
+        "              url = f\"http://files.rcsb.org/view/{pdb_id}.pdb\"\n",
+        "          filename = f'{pdb_id}.pdb'\n",
+        "\n",
+        "      cache_path = os.path.join(PDB_DIR, filename)\n",
+        "      if os.path.exists(cache_path):\n",
+        "          return cache_path\n",
+        "\n",
+        "      pdb_req = requests.get(url)\n",
+        "      pdb_req.raise_for_status()\n",
+        "      open(cache_path, 'w').write(pdb_req.text)\n",
+        "      return cache_path\n",
+        "\n",
+        "  pdb_files = [download_pdb_file(_PDB_id) for _PDB_id in tqdm(PDB_id.split(\",\"))]\n",
+        "  smiless = df['Compound SMILES'].dropna()\n",
+        "\n",
+        "  return pdb_files, smiless"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 5,
+      "metadata": {
+        "id": "ek_siVRR1IP5"
+      },
+      "outputs": [],
+      "source": [
+        "def run_in_batches_per_pdb(pdb_files,smiless,batch_length):\n",
+        "\n",
+        "  df_list = []\n",
+        "  i = 0\n",
+        "  length = len(pdb_files)\n",
+        "  done = 0\n",
+        "  remainder = length - done\n",
+        "\n",
+        "  while remainder > 0:\n",
+        "    i += 1\n",
+        "    if remainder >= batch_length:\n",
+        "      with open('/tmp/input_protein_ligand.csv', 'w') as out:\n",
+        "        out.write(\"protein_path,ligand\\n\")\n",
+        "        for pdb_file in pdb_files[done:done+batch_length]:\n",
+        "          for smiles in smiless:\n",
+        "            out.write(f\"{pdb_file},{smiles}\\n\")\n",
+        "      done += batch_length\n",
+        "      print(f'{round(done/length*100,2)} % done...')\n",
+        "\n",
+        "    else:\n",
+        "      with open('/tmp/input_protein_ligand.csv', 'w') as out:\n",
+        "        out.write(\"protein_path,ligand\\n\")\n",
+        "        for pdb_file in pdb_files[done:]:\n",
+        "          for smiles in smiless:\n",
+        "            out.write(f\"{pdb_file},{smiles}\\n\")\n",
+        "      done += batch_length\n",
+        "\n",
+        "    remainder = length - done\n",
+        "\n",
+        "    %cd /content/DiffDock\n",
+        "    !python datasets/esm_embedding_preparation.py --protein_ligand_csv /tmp/input_protein_ligand.csv --out_file data/prepared_for_esm.fasta \n",
+        "    %cd /content/DiffDock\n",
+        "    %env HOME=esm/model_weights\n",
+        "    %env PYTHONPATH=$PYTHONPATH:/content/DiffDock/esm\n",
+        "    !python /content/DiffDock/esm/scripts/extract.py esm2_t33_650M_UR50D data/prepared_for_esm.fasta data/esm2_output --repr_layers 33 --include per_tok --truncation_seq_length 30000\n",
+        "    %cd /content/DiffDock\n",
+        "    !python -m inference --protein_ligand_csv /tmp/input_protein_ligand.csv --out_dir results/user_predictions_small --inference_steps 20 --samples_per_complex 10 --batch_size 6\n",
+        "    %cd /content/DiffDock/results/user_predictions_small\n",
+        "\n",
+        "    confidences = np.load('/content/DiffDock/results/user_predictions_small/confidences.npy')\n",
+        "    names = np.load('/content/DiffDock/results/user_predictions_small/complex_names.npy')\n",
+        "\n",
+        "    complexes = [(name[name.find('-tmp-pdb-')+10:name.find('.pdb_')],name[name.find('.pdb____')+8:]) for name in names]\n",
+        "\n",
+        "    df_results = pd.DataFrame({'PDB' : [pdb for pdb,smiles in complexes],\n",
+        "                            'smiles' : [smiles for pdb,smiles in complexes],\n",
+        "                            'top confidence score' : [max(c) for c in confidences],\n",
+        "                            'mean confidence score' : [np.mean(c) for c in confidences],\n",
+        "                            'min confidence score' : [min(c) for c in confidences]})\n",
+        "\n",
+        "    now = datetime.datetime.now()\n",
+        "    now_str = now.strftime('%Y-%m-%d_%H-%M-%S')\n",
+        "\n",
+        "    df_results_tsv = f\"df_diffdock_results_batch_{i}_{now_str}.tsv\"\n",
+        "    df_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{df_results_tsv}', sep='\\t', index=None)\n",
+        "    df_list.append(df_results)\n",
+        "\n",
+        "  combined_results = pd.DataFrame()\n",
+        "  results_name = f\"combined_results_{datetime.now().isoformat()[2:10].replace('-','')}\"\n",
+        "  for d in df_list:\n",
+        "    combined_results = pd.concat([combined_results,d])\n",
+        "  combined_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{results_name}_', sep='\\t', index=None)\n",
+        "\n",
+        "  \n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 19,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "-CwEZ5Us2Jyo",
+        "outputId": "7c97a343-c9ab-4b3d-9380-1c0e79903e9a"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "time: 2 ms (started: 2023-05-31 13:15:48 +00:00)\n"
+          ]
+        }
+      ],
+      "source": [
+        "def warnings_check(process):\n",
+        "\n",
+        "  try:\n",
+        "    stdout = process.stdout.decode('utf-8')\n",
+        "  except:\n",
+        "    stdout = ''\n",
+        "  try:\n",
+        "    stderr = process.stderr.decode('utf-8')\n",
+        "  except:\n",
+        "    stderr = ''\n",
+        "\n",
+        "  # Look for warnings in the stderr text\n",
+        "  warnings = [line for line in stderr.split('\\n') if 'warning' in line.lower()]\n",
+        "  warnings.extend([line for line in stdout.split('\\n') if 'warning' in line.lower()])\n",
+        "  \n",
+        "  for warning in warnings:\n",
+        "      print(warning)\n",
+        "\n",
+        "def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):\n",
+        "\n",
+        "  df_list = []\n",
+        "  i = 0\n",
+        "  length = len(pdb_files)\n",
+        "  done = 0\n",
+        "  remainder = length - done\n",
+        "\n",
+        "  while remainder > 0:\n",
+        "\n",
+        "    for _ in tqdm(range(remainder), desc='Processing batches', unit='batch'):\n",
+        "      i += 1\n",
+        "      if remainder >= batch_length:\n",
+        "        with open('/tmp/input_protein_ligand.csv', 'w') as out:\n",
+        "          out.write(\"protein_path,ligand\\n\")\n",
+        "          for pdb_file in pdb_files[done:done+batch_length]:\n",
+        "            for smiles in smiless:\n",
+        "              out.write(f\"{pdb_file},{smiles}\\n\")\n",
+        "        done += batch_length\n",
+        "\n",
+        "      else:\n",
+        "        with open('/tmp/input_protein_ligand.csv', 'w') as out:\n",
+        "          out.write(\"protein_path,ligand\\n\")\n",
+        "          for pdb_file in pdb_files[done:]:\n",
+        "            for smiles in smiless:\n",
+        "              out.write(f\"{pdb_file},{smiles}\\n\")\n",
+        "        done += batch_length\n",
+        "\n",
+        "      remainder = length - done\n",
+        "\n",
+        "    # Define the directory paths\n",
+        "      base_dir = \"/content/DiffDock\"\n",
+        "      esm_dir = os.path.join(base_dir, \"esm\")\n",
+        "      results_dir = os.path.join(base_dir, \"results/user_predictions_small\")\n",
+        "\n",
+        "      # Run the esm_embedding_preparation.py script\n",
+        "      os.chdir(base_dir)\n",
+        "      print('Preparing ESM embeddings...')\n",
+        "      ESM = subprocess.run([\"python\", \"datasets/esm_embedding_preparation.py\", \"--protein_ligand_csv\", \"/tmp/input_protein_ligand.csv\", \"--out_file\", \"data/prepared_for_esm.fasta\"], check=True)\n",
+        "      warnings_check(ESM)\n",
+        "\n",
+        "\n",
+        "      # Set up environment variables for ESM\n",
+        "      os.environ['HOME'] = os.path.join(esm_dir, \"model_weights\")\n",
+        "      os.environ['PYTHONPATH'] += \":\" + esm_dir\n",
+        "\n",
+        "      # Run the extract.py script\n",
+        "      os.chdir(base_dir)\n",
+        "      print('Running extract.py...')\n",
+        "      extract = subprocess.run([\"python\", os.path.join(esm_dir, \"scripts/extract.py\"), \"esm2_t33_650M_UR50D\", \"data/prepared_for_esm.fasta\", \"data/esm2_output\", \"--repr_layers\", \"33\", \"--include\", \"per_tok\", \"--truncation_seq_length\", \"30000\"], check=True)\n",
+        "      warnings_check(extract)\n",
+        "\n",
+        "      # Run the inference module\n",
+        "      os.chdir(base_dir)\n",
+        "      print('Performing DiffDock inference...')\n",
+        "      inference = subprocess.run([\"python\", \"-m\", \"inference\", \"--protein_ligand_csv\", \"/tmp/input_protein_ligand.csv\", \"--out_dir\", \"results/user_predictions_small\", \"--inference_steps\", \"20\", \"--samples_per_complex\", \"10\", \"--batch_size\", \"6\"], check=True)\n",
+        "      warnings_check(inference)\n",
+        "\n",
+        "      # Change to the results directory\n",
+        "      os.chdir(results_dir)\n",
+        "      confidences = np.load('/content/DiffDock/results/user_predictions_small/confidences.npy')\n",
+        "      names = np.load('/content/DiffDock/results/user_predictions_small/complex_names.npy')\n",
+        "\n",
+        "      complexes = [(name[name.find('-tmp-pdb-')+10:name.find('.pdb_')],name[name.find('.pdb____')+8:]) for name in names]\n",
+        "\n",
+        "      df_results = pd.DataFrame({'PDB' : [pdb for pdb,smiles in complexes],\n",
+        "                              'smiles' : [smiles for pdb,smiles in complexes],\n",
+        "                              'top confidence score' : [max(c) for c in confidences],\n",
+        "                              'mean confidence score' : [np.mean(c) for c in confidences],\n",
+        "                              'min confidence score' : [min(c) for c in confidences]})\n",
+        "\n",
+        "      now = datetime.datetime.now()\n",
+        "      now_str = now.strftime('%Y-%m-%d_%H-%M-%S')\n",
+        "\n",
+        "      df_results_tsv = f\"df_diffdock_results_batch_{i}_{now_str}.tsv\"\n",
+        "      df_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{df_results_tsv}', sep='\\t', index=None)\n",
+        "      df_list.append(df_results)\n",
+        "\n",
+        "  combined_results = pd.DataFrame()\n",
+        "  results_name = f\"combined_results_{datetime.now().isoformat()[2:10].replace('-','')}\"\n",
+        "  \n",
+        "  for d in df_list:\n",
+        "    combined_results = pd.concat([combined_results,d])\n",
+        "  combined_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{results_name}_', sep='\\t', index=None)\n",
+        "\n",
+        "  \n",
+        "\n",
+        "\n",
+        "\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 7,
+      "metadata": {
+        "id": "4pyvmK6KM6I9"
+      },
+      "outputs": [],
+      "source": [
+        "from google.colab import drive \n",
+        "import pandas as pd\n",
+        "from google.colab import files\n",
+        "import os\n",
+        "import requests\n",
+        "import time\n",
+        "from random import random\n",
+        "from tqdm import tqdm \n",
+        "from glob import glob\n",
+        "from shlex import quote\n",
+        "from datetime import datetime\n",
+        "from tqdm.auto import tqdm\n",
+        "import re\n",
+        "import datetime\n",
+        "import subprocess\n",
+        "\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "drive.mount('/content/gdrive')\n",
+        "install_all_packages()"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "wip7lsmc3O4d",
+        "outputId": "59723d66-2a0a-47c3-9883-815f449900dc"
+      },
+      "execution_count": 8,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Drive already mounted at /content/gdrive; to attempt to forcibly remount, call drive.mount(\"/content/gdrive\", force_remount=True).\n",
+            "time: 2.12 s (started: 2023-05-31 12:54:20 +00:00)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "pdb_files, smiless = import_data(file_name='/content/gdrive/MyDrive/DiffDock results/Anathi/targets_smiles.xlsx',output_file='/tmp/total_input_protein_ligand.csv')\n"
+      ],
+      "metadata": {
+        "id": "za_2ZwKr3zY6"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "run_in_batches_per_pdb_python(pdb_files[2:4], smiless[:3],batch_length=1)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 389,
+          "referenced_widgets": [
+            "ff0820190aa546d7a293e8a3c0e84e0e",
+            "f581b7cf2c2d41e2955af8bddf7779b5",
+            "6adb291770cb4dc2863534c342a8a5f2",
+            "7cff34e2614442a2bdc42a0c1093e2e3",
+            "fffd91a5d6eb4fa588fc6d669cb5ce54",
+            "5623ee4bcd5d42ceb95cb3a17ad2d83d",
+            "b61c780fc8624f0fbdaabbead3a71d0f",
+            "76e3f871c42e4dc9924fd5af07bd6e6d",
+            "484f0563b51e4f99bb8d0c5db85c3ebb",
+            "55514500c8304f4b89dd92d16b4abd7b",
+            "5647a834b3964bb1b164d02caeddc9f4"
+          ]
+        },
+        "id": "DWqlmTXD72sv",
+        "outputId": "63843e5e-22a8-4c28-80c9-e5a8a89592bf"
+      },
+      "execution_count": 23,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/plain": [
+              "Processing batches:   0%|          | 0/2 [00:00<?, ?batch/s]"
+            ],
+            "application/vnd.jupyter.widget-view+json": {
+              "version_major": 2,
+              "version_minor": 0,
+              "model_id": "ff0820190aa546d7a293e8a3c0e84e0e"
+            }
+          },
+          "metadata": {}
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Preparing ESM embeddings...\n",
+            "Running extract.py...\n",
+            "Performing DiffDock inference...\n"
+          ]
+        },
+        {
+          "output_type": "error",
+          "ename": "NameError",
+          "evalue": "ignored",
+          "traceback": [
+            "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+            "\u001b[0;31mNameError\u001b[0m                                 Traceback (most recent call last)",
+            "\u001b[0;32m<ipython-input-23-13a57bdbcf92>\u001b[0m in \u001b[0;36m<cell line: 1>\u001b[0;34m()\u001b[0m\n\u001b[0;32m----> 1\u001b[0;31m \u001b[0mrun_in_batches_per_pdb_python\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mpdb_files\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;36m2\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;36m4\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0msmiless\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;34m:\u001b[0m\u001b[0;36m3\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m\u001b[0mbatch_length\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;36m1\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m",
+            "\u001b[0;32m<ipython-input-19-53580e3f19cd>\u001b[0m in \u001b[0;36mrun_in_batches_per_pdb_python\u001b[0;34m(pdb_files, smiless, batch_length)\u001b[0m\n\u001b[1;32m     77\u001b[0m       \u001b[0;31m# Change to the results directory\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m     78\u001b[0m       \u001b[0mos\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mchdir\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mresults_dir\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m---> 79\u001b[0;31m       \u001b[0mconfidences\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mload\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m'/content/DiffDock/results/user_predictions_small/confidences.npy'\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m     80\u001b[0m       \u001b[0mnames\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mnp\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0mload\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m'/content/DiffDock/results/user_predictions_small/complex_names.npy'\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m     81\u001b[0m \u001b[0;34m\u001b[0m\u001b[0m\n",
+            "\u001b[0;31mNameError\u001b[0m: name 'np' is not defined"
+          ]
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "time: 4min 3s (started: 2023-05-31 13:17:19 +00:00)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "len(pdb_files)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "jk8rcx7539YW",
+        "outputId": "d7b62368-99cf-41a1-c15c-bb6ee7fe658c"
+      },
+      "execution_count": 21,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "150"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 21
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "time: 2.36 ms (started: 2023-05-31 13:16:39 +00:00)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "len(smiless)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "I9Kz8UEo9AgP",
+        "outputId": "58b773c1-6024-4290-9127-6064d8dbd1c1"
+      },
+      "execution_count": 22,
+      "outputs": [
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "80"
+            ]
+          },
+          "metadata": {},
+          "execution_count": 22
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "time: 2.46 ms (started: 2023-05-31 13:16:47 +00:00)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "ddXeIeqa9CLh"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ],
+  "metadata": {
+    "accelerator": "GPU",
+    "colab": {
+      "machine_shape": "hm",
+      "provenance": [],
+      "gpuClass": "premium",
+      "include_colab_link": true
+    },
+    "gpuClass": "premium",
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    },
+    "widgets": {
+      "application/vnd.jupyter.widget-state+json": {
+        "ff0820190aa546d7a293e8a3c0e84e0e": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "HBoxModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_dom_classes": [],
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "HBoxModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/controls",
+            "_view_module_version": "1.5.0",
+            "_view_name": "HBoxView",
+            "box_style": "",
+            "children": [
+              "IPY_MODEL_f581b7cf2c2d41e2955af8bddf7779b5",
+              "IPY_MODEL_6adb291770cb4dc2863534c342a8a5f2",
+              "IPY_MODEL_7cff34e2614442a2bdc42a0c1093e2e3"
+            ],
+            "layout": "IPY_MODEL_fffd91a5d6eb4fa588fc6d669cb5ce54"
+          }
+        },
+        "f581b7cf2c2d41e2955af8bddf7779b5": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "HTMLModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_dom_classes": [],
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "HTMLModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/controls",
+            "_view_module_version": "1.5.0",
+            "_view_name": "HTMLView",
+            "description": "",
+            "description_tooltip": null,
+            "layout": "IPY_MODEL_5623ee4bcd5d42ceb95cb3a17ad2d83d",
+            "placeholder": "​",
+            "style": "IPY_MODEL_b61c780fc8624f0fbdaabbead3a71d0f",
+            "value": "Processing batches:   0%"
+          }
+        },
+        "6adb291770cb4dc2863534c342a8a5f2": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "FloatProgressModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_dom_classes": [],
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "FloatProgressModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/controls",
+            "_view_module_version": "1.5.0",
+            "_view_name": "ProgressView",
+            "bar_style": "danger",
+            "description": "",
+            "description_tooltip": null,
+            "layout": "IPY_MODEL_76e3f871c42e4dc9924fd5af07bd6e6d",
+            "max": 2,
+            "min": 0,
+            "orientation": "horizontal",
+            "style": "IPY_MODEL_484f0563b51e4f99bb8d0c5db85c3ebb",
+            "value": 0
+          }
+        },
+        "7cff34e2614442a2bdc42a0c1093e2e3": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "HTMLModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_dom_classes": [],
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "HTMLModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/controls",
+            "_view_module_version": "1.5.0",
+            "_view_name": "HTMLView",
+            "description": "",
+            "description_tooltip": null,
+            "layout": "IPY_MODEL_55514500c8304f4b89dd92d16b4abd7b",
+            "placeholder": "​",
+            "style": "IPY_MODEL_5647a834b3964bb1b164d02caeddc9f4",
+            "value": " 0/2 [04:03&lt;?, ?batch/s]"
+          }
+        },
+        "fffd91a5d6eb4fa588fc6d669cb5ce54": {
+          "model_module": "@jupyter-widgets/base",
+          "model_name": "LayoutModel",
+          "model_module_version": "1.2.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/base",
+            "_model_module_version": "1.2.0",
+            "_model_name": "LayoutModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "LayoutView",
+            "align_content": null,
+            "align_items": null,
+            "align_self": null,
+            "border": null,
+            "bottom": null,
+            "display": null,
+            "flex": null,
+            "flex_flow": null,
+            "grid_area": null,
+            "grid_auto_columns": null,
+            "grid_auto_flow": null,
+            "grid_auto_rows": null,
+            "grid_column": null,
+            "grid_gap": null,
+            "grid_row": null,
+            "grid_template_areas": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "height": null,
+            "justify_content": null,
+            "justify_items": null,
+            "left": null,
+            "margin": null,
+            "max_height": null,
+            "max_width": null,
+            "min_height": null,
+            "min_width": null,
+            "object_fit": null,
+            "object_position": null,
+            "order": null,
+            "overflow": null,
+            "overflow_x": null,
+            "overflow_y": null,
+            "padding": null,
+            "right": null,
+            "top": null,
+            "visibility": null,
+            "width": null
+          }
+        },
+        "5623ee4bcd5d42ceb95cb3a17ad2d83d": {
+          "model_module": "@jupyter-widgets/base",
+          "model_name": "LayoutModel",
+          "model_module_version": "1.2.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/base",
+            "_model_module_version": "1.2.0",
+            "_model_name": "LayoutModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "LayoutView",
+            "align_content": null,
+            "align_items": null,
+            "align_self": null,
+            "border": null,
+            "bottom": null,
+            "display": null,
+            "flex": null,
+            "flex_flow": null,
+            "grid_area": null,
+            "grid_auto_columns": null,
+            "grid_auto_flow": null,
+            "grid_auto_rows": null,
+            "grid_column": null,
+            "grid_gap": null,
+            "grid_row": null,
+            "grid_template_areas": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "height": null,
+            "justify_content": null,
+            "justify_items": null,
+            "left": null,
+            "margin": null,
+            "max_height": null,
+            "max_width": null,
+            "min_height": null,
+            "min_width": null,
+            "object_fit": null,
+            "object_position": null,
+            "order": null,
+            "overflow": null,
+            "overflow_x": null,
+            "overflow_y": null,
+            "padding": null,
+            "right": null,
+            "top": null,
+            "visibility": null,
+            "width": null
+          }
+        },
+        "b61c780fc8624f0fbdaabbead3a71d0f": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "DescriptionStyleModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "DescriptionStyleModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "StyleView",
+            "description_width": ""
+          }
+        },
+        "76e3f871c42e4dc9924fd5af07bd6e6d": {
+          "model_module": "@jupyter-widgets/base",
+          "model_name": "LayoutModel",
+          "model_module_version": "1.2.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/base",
+            "_model_module_version": "1.2.0",
+            "_model_name": "LayoutModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "LayoutView",
+            "align_content": null,
+            "align_items": null,
+            "align_self": null,
+            "border": null,
+            "bottom": null,
+            "display": null,
+            "flex": null,
+            "flex_flow": null,
+            "grid_area": null,
+            "grid_auto_columns": null,
+            "grid_auto_flow": null,
+            "grid_auto_rows": null,
+            "grid_column": null,
+            "grid_gap": null,
+            "grid_row": null,
+            "grid_template_areas": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "height": null,
+            "justify_content": null,
+            "justify_items": null,
+            "left": null,
+            "margin": null,
+            "max_height": null,
+            "max_width": null,
+            "min_height": null,
+            "min_width": null,
+            "object_fit": null,
+            "object_position": null,
+            "order": null,
+            "overflow": null,
+            "overflow_x": null,
+            "overflow_y": null,
+            "padding": null,
+            "right": null,
+            "top": null,
+            "visibility": null,
+            "width": null
+          }
+        },
+        "484f0563b51e4f99bb8d0c5db85c3ebb": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "ProgressStyleModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "ProgressStyleModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "StyleView",
+            "bar_color": null,
+            "description_width": ""
+          }
+        },
+        "55514500c8304f4b89dd92d16b4abd7b": {
+          "model_module": "@jupyter-widgets/base",
+          "model_name": "LayoutModel",
+          "model_module_version": "1.2.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/base",
+            "_model_module_version": "1.2.0",
+            "_model_name": "LayoutModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "LayoutView",
+            "align_content": null,
+            "align_items": null,
+            "align_self": null,
+            "border": null,
+            "bottom": null,
+            "display": null,
+            "flex": null,
+            "flex_flow": null,
+            "grid_area": null,
+            "grid_auto_columns": null,
+            "grid_auto_flow": null,
+            "grid_auto_rows": null,
+            "grid_column": null,
+            "grid_gap": null,
+            "grid_row": null,
+            "grid_template_areas": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "height": null,
+            "justify_content": null,
+            "justify_items": null,
+            "left": null,
+            "margin": null,
+            "max_height": null,
+            "max_width": null,
+            "min_height": null,
+            "min_width": null,
+            "object_fit": null,
+            "object_position": null,
+            "order": null,
+            "overflow": null,
+            "overflow_x": null,
+            "overflow_y": null,
+            "padding": null,
+            "right": null,
+            "top": null,
+            "visibility": null,
+            "width": null
+          }
+        },
+        "5647a834b3964bb1b164d02caeddc9f4": {
+          "model_module": "@jupyter-widgets/controls",
+          "model_name": "DescriptionStyleModel",
+          "model_module_version": "1.5.0",
+          "state": {
+            "_model_module": "@jupyter-widgets/controls",
+            "_model_module_version": "1.5.0",
+            "_model_name": "DescriptionStyleModel",
+            "_view_count": null,
+            "_view_module": "@jupyter-widgets/base",
+            "_view_module_version": "1.2.0",
+            "_view_name": "StyleView",
+            "description_width": ""
+          }
+        }
+      }
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}

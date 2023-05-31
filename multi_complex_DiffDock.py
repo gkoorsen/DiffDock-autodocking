@@ -307,13 +307,14 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
       df_list.append(df_results)
 
   combined_results = pd.DataFrame()
-  results_name = f"combined_results_{datetime.now().isoformat()[2:10].replace('-','')}"
+  now = datetime.datetime.now()
+  now_str = now.strftime('%Y-%m-%d_%H-%M-%S')
+  results_name = f"combined_results_{now_str}.csv"
   
   for d in df_list:
     combined_results = pd.concat([combined_results,d])
-  combined_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{results_name}_', sep='\t', index=None)
+  combined_results.to_csv(f'/content/gdrive/MyDrive/DiffDock results/Anathi/{results_name}', sep='\t', index=None)
 
-  
 def main():
 
   drive.mount('/content/gdrive')

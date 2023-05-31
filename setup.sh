@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Make sure to set the script as executable using the command chmod +x setup.sh before running it.
+#Execute setup.sh from the ~ directory
 # Remove the existing results directory
 if [ -d "~/DiffDock/results" ]
 then

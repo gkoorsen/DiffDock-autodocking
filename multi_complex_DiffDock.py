@@ -153,11 +153,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
         df_results.to_csv(f'~/DiffDock/results/{df_results_tsv}', sep='\t', index=None)
         df_list.append(df_results)
       except:
-        try:
-          stderr = process.stderr.decode('utf-8')
-          print(stderr)
-        except:
-          print('Undefined error occurred...')
+         print('Undefined ERROR occurred!')
 
   combined_results = pd.DataFrame()
 

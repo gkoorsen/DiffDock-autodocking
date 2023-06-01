@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 import re
 import subprocess
 import numpy as np
+import argparse
 
 
 def import_data(file_name):
@@ -173,14 +174,13 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
   
 def main():
   
-  url = 'https://github.com/gkoorsen/DiffDock-autodocking/blob/main/targets_smiles.xlsx?raw=true'
-  response = requests.get(url)
-
-  with open('temporary_excel_file.xlsx', 'wb') as input_file:
-      input_file.write(response.content)
+  parser = argparse.ArgumentParser(description='DiffDock Multidocking')
+  parser.add_argument('-f', '--file', type=str, required=True, help='Input file path')
+  parser.add_argument('-b', '--batch', type=int, default=2, help='Batch length (pdb files)')
+  args = parser.parse_args()
   
-  pdb_files, smiless =  import_data(input_file)
-  results = run_in_batches_per_pdb_python(pdb_files, smiless,batch_length=2)
+  pdb_files, smiless =  import_data(args.file)
+  results = run_in_batches_per_pdb_python(pdb_files, smiless,batch_length=args.batch)
 
 
 if __name__ == '__main__': 

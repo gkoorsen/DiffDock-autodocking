@@ -83,13 +83,13 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
 
   while remainder > 0:
     
-    os.chdir('~/DiffDock')
+    os.chdir(os.path.expanduser('~/DiffDock'))
     os.mkdir('tmp')
 
     for _ in tqdm(range(remainder), desc='Processing batches', unit='batch'):
       i += 1
       if remainder >= batch_length:
-        with open('~DiffDock/tmp/input_protein_ligand.csv', 'w') as out:
+        with open(os.path.expanduser('~DiffDock/tmp/input_protein_ligand.csv'), 'w') as out:
           out.write("protein_path,ligand\n")
           for pdb_file in pdb_files[done:done+batch_length]:
             for smiles in smiless:
@@ -97,7 +97,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
         done += batch_length
 
       else:
-        with open('~/DiffDock/tmp/input_protein_ligand.csv', 'w') as out:
+        with open(os.path.expanduser('~/DiffDock/tmp/input_protein_ligand.csv'), 'w') as out:
           out.write("protein_path,ligand\n")
           for pdb_file in pdb_files[done:]:
             for smiles in smiless:
@@ -107,7 +107,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
       remainder = length - done
 
     # Define the directory paths
-      base_dir = "~/DiffDock"
+      base_dir = os.path.expanduser("~/DiffDock")
       esm_dir = os.path.join(base_dir, "esm")
       results_dir = os.path.join(base_dir, "results/user_predictions_small")
 
@@ -136,8 +136,8 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
         warnings_check(inference)
         # Change to the results directory
         os.chdir(results_dir)
-        confidences = np.load('~/DiffDock/results/user_predictions_small/confidences.npy')
-        names = np.load('~/DiffDock/results/user_predictions_small/complex_names.npy')
+        confidences = np.load(os.path.expanduser('~/DiffDock/results/user_predictions_small/confidences.npy'))
+        names = np.load(os.path.expanduser('~/DiffDock/results/user_predictions_small/complex_names.npy'))
 
         complexes = [(name[name.find('-tmp-pdb-')+10:name.find('.pdb_')],name[name.find('.pdb____')+8:]) for name in names]
 
@@ -151,7 +151,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
         now_str = now.strftime('%Y-%m-%d_%H-%M-%S')
 
         df_results_tsv = f"df_diffdock_results_batch_{i}_{now_str}.tsv"
-        df_results.to_csv(f'~/DiffDock/results/{df_results_tsv}', sep='\t', index=None)
+        df_results.to_csv(os.path.expanduser(f'~/DiffDock/results/{df_results_tsv}'), sep='\t', index=None)
         df_list.append(df_results)
       except:
          print('Undefined ERROR occurred!')
@@ -167,7 +167,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
     combined_results = pd.concat([combined_results,d])
 
   combined_results_filtered = combined_results[combined_results['top confidence score'] > 0]
-  combined_results_filtered.to_csv(f'~/DiffDock/results/{results_name}', sep='\t', index=None)
+  combined_results_filtered.to_csv(os.path.expanduser(f'~/DiffDock/results/{results_name}'), sep='\t', index=None)
 
   return combined_results
 

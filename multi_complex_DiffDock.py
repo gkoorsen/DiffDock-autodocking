@@ -122,7 +122,11 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
 
       # Set up environment variables for ESM
       os.environ['HOME'] = os.path.join(esm_dir, "model_weights")
-      os.environ['PYTHONPATH'] += ":" + esm_dir
+      
+      if 'PYTHONPATH' in os.environ:
+       os.environ['PYTHONPATH'] += ":" + esm_dir
+      else:
+       os.environ['PYTHONPATH'] = esm_dir
 
       # Run the extract.py script
       os.chdir(base_dir)

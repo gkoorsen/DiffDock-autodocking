@@ -43,3 +43,7 @@ then
     pip install -e .
     cd ~/DiffDock
 fi
+
+# Fetch script for multiple docking:
+wget https://raw.githubusercontent.com/gkoorsen/DiffDock-autodocking/main/multi_complex_DiffDock.py -P ~/DiffDock/
+

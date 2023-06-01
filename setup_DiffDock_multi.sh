@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Make sure to set the script as executable using the command chmod +x setup.sh before running it.
-#Execute setup.sh from the ~ directory
+# Execute setup.sh from the ~ directory
 # Remove the existing results directory
 if [ -d "~/DiffDock/results" ]
 then
@@ -18,20 +18,10 @@ then
 fi
 
 # Install necessary Python packages
-pip install ipython-autotime pyg==0.7.1 pyyaml==6.0 scipy==1.7.3 networkx==2.6.3 biopython==1.79 rdkit-pypi==2022.03.5 e3nn==0.5.0 spyrmsd==0.5.2 biopandas==0.4.1 torch==1.12.1+cu113 --quiet
+pip install ipython-autotime pyg==0.7.1 pyyaml==6.0 scipy==1.7.3 networkx==2.6.3 biopython==1.79 rdkit-pypi==2022.03.5 e3nn==0.5.0 spyrmsd==0.5.2 biopandas==0.4.1 torch --quiet
 
-# Check for torch_geometric and install if not present
-python -c "
-import torch
-try:
-    import torch_geometric
-except ModuleNotFoundError:
-    !pip uninstall torch-scatter torch-sparse torch-geometric torch-cluster  --y
-    !pip install torch-scatter -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet
-    !pip install torch-sparse -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet
-    !pip install torch-cluster -f https://data.pyg.org/whl/torch-{torch.__version__}.html --quiet
-    !pip install git+https://github.com/pyg-team/pytorch_geometric.git  --quiet 
-"
+# Install PyTorch Geometric dependencies
+pip install torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric --quiet
 
 # Clone and install ESM if not present
 if [ ! -d "~/DiffDock/esm" ]
@@ -46,4 +36,3 @@ fi
 
 # Fetch script for multiple docking:
 wget https://raw.githubusercontent.com/gkoorsen/DiffDock-autodocking/main/multi_complex_DiffDock.py -P ~/DiffDock/
-

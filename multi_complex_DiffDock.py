@@ -84,7 +84,9 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
   while remainder > 0:
     
     os.chdir(os.path.expanduser('~/DiffDock'))
-    os.mkdir('tmp')
+    
+    if not os.path.exists('tmp'):
+      os.mkdir('tmp')
 
     for _ in tqdm(range(remainder), desc='Processing batches', unit='batch'):
       i += 1

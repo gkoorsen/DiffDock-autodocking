@@ -89,7 +89,7 @@ def run_in_batches_per_pdb_python(pdb_files,smiless,batch_length):
     for _ in tqdm(range(remainder), desc='Processing batches', unit='batch'):
       i += 1
       if remainder >= batch_length:
-        with open(os.path.expanduser('~DiffDock/tmp/input_protein_ligand.csv'), 'w') as out:
+        with open(os.path.expanduser('~/DiffDock/tmp/input_protein_ligand.csv'), 'w') as out:
           out.write("protein_path,ligand\n")
           for pdb_file in pdb_files[done:done+batch_length]:
             for smiles in smiless:

@@ -1,2 +1,2 @@
 # DiffDock-autodocking
-Automatic multi-complex docking with DiffDock
+Automatic multi-complex docking with  Smina and DiffDock
